@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dify Agent UI</title>
+    <!-- 引入Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 引入Lucide图标库 -->
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+    <!-- 引入marked.js用于Markdown解析 -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <style>
+        /* 自定义滚动条样式 (亮色主题) */
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #f1f1f1;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #ccc;
+            border-radius: 3px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #aaa;
+        }
+
+        textarea {
+            resize: none;
+            height: 48px;
+        }
+
+        /* 流式输出时光标闪烁效果 */
+        .streaming-cursor::after {
+            content: '▍';
+            animation: blink 1s infinite;
+            display: inline-block;
+            vertical-align: bottom;
+            color: #a0a000;
+        }
+
+        @keyframes blink {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0;
+            }
+        }
+
+        /* 自定义滑块样式 */
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 20px;
+            height: 20px;
+            background: #3b82f6;
+            cursor: pointer;
+            border-radius: 50%;
+            margin-top: -6px;
+        }
+
+        /* Markdown渲染样式 */
+        .prose> :first-child {
+            margin-top: 0;
+        }
+
+        .prose> :last-child {
+            margin-bottom: 0;
+        }
+
+        .prose p {
+            margin: 0.75em 0;
+        }
+
+        .prose strong {
+            font-weight: 600;
+        }
+
+        .prose ul,
+        .prose ol {
+            margin: 0.75em 0;
+            padding-left: 1.75em;
+        }
+
+        .prose ul {
+            list-style-type: disc;
+        }
+
+        .prose ol {
+            list-style-type: decimal;
+        }
+
+        .prose li>p {
+            margin: 0;
+        }
+
+        .prose li+li {
+            margin-top: 0.25em;
+        }
+
+        .prose code {
+            background-color: #e5e7eb;
+            color: #1f2937;
+            padding: 0.1em 0.4em;
+            border-radius: 0.25rem;
+            font-size: 0.9em;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        }
+
+        .prose pre {
+            background-color: #1f2937;
+            color: #d1d5db;
+            padding: 0.75em;
+            border-radius: 0.5rem;
+            overflow-x: auto;
+            font-size: 0.9em;
+        }
+
+        .prose pre code {
+            background-color: transparent;
+            color: inherit;
+            padding: 0;
+        }
+    </style>
+</head>
+
+<body class="bg-gray-100 text-gray-800 font-sans antialiased overflow-hidden">
+    <!-- Canvas背景 -->
+    <canvas id="background-canvas" class="fixed top-0 left-0 w-full h-full z-0"></canvas>
+
+    <!-- 主容器 -->
+    <div id="app"
+        class="relative z-10 flex flex-col h-screen max-w-3xl mx-auto px-4 justify-center items-center transition-all duration-1000 ease-out">
+
+        <!-- 欢迎界面 -->
+        <div id="welcome-screen"
+            class="flex flex-col items-center justify-center z-10 transition-opacity duration-800 ease-out">
+            <div class="p-8 bg-white/50 backdrop-blur-md rounded-2xl text-center shadow-md mb-4">
+                <h1 class="text-4xl font-bold text-gray-900 mb-2">Anime Agent</h1>
+                <p class="text-gray-600">你好！我是一个动画高手</p>
+            </div>
+        </div>
+
+        <!-- 聊天消息区域: 初始时高度为0，不占据空间 -->
+        <div id="chat-container"
+            class="w-full h-0 flex-grow-0 overflow-y-auto space-y-6 opacity-0 transition-all duration-500 ease-out pt-8 pb-4">
+            <!-- 聊天消息将在这里动态添加 -->
+        </div>
+
+        <!-- 输入区域容器 -->
+        <div id="input-area-wrapper" class="w-full transition-all duration-900 ease-out pt-4">
+            <!-- 设置面板 -->
+            <div id="settings-panel"
+                class="hidden bg-white/80 backdrop-blur-sm rounded-xl p-4 mb-3 shadow-md transition-all">
+                <label for="temperature-slider" class="block text-sm font-medium text-gray-700">模型温度 (Temperature):
+                    <span id="temperature-value" class="font-bold">0.7</span></label>
+                <p class="text-xs text-gray-500 mb-2">值越低结果越精确，值越高结果越有创意。</p>
+                <input id="temperature-slider" type="range" min="0" max="1" step="0.1" value="0.7"
+                    class="w-full h-2 bg-gray-300 rounded-lg appearance-none cursor-pointer">
+            </div>
+
+            <!-- 输入框和按钮 -->
+            <div class="flex items-end gap-2">
+                <form id="chat-form" class="relative w-full">
+                    <textarea id="message-input" placeholder="输入你的消息..."
+                        class="w-full bg-white/75 backdrop-blur-sm border-none focus:outline-none focus:ring-0 text-gray-800 placeholder-gray-400 p-3 pl-5 pr-14 rounded-2xl shadow-md focus:shadow-lg transition-shadow duration-300 max-h-32 overflow-y-auto"
+                        rows="1"></textarea>
+                    <button type="submit" id="send-button"
+                        class="absolute right-2 bottom-3 bg-blue-500 hover:bg-blue-600 disabled:bg-gray-400 disabled:cursor-not-allowed text-white rounded-full p-2 transition-colors duration-200 flex items-center justify-center w-8 h-8">
+                        <svg id="send-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16"
+                            viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+                            stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-send-horizontal">
+                            <path d="m3 3 3 9-3 9 19-9Z" />
+                            <path d="M6 12h16" />
+                        </svg>
+                        <svg id="loading-spinner" class="animate-spin h-5 w-5 text-white hidden"
+                            xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4">
+                            </circle>
+                            <path class="opacity-75" fill="currentColor"
+                                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z">
+                            </path>
+                        </svg>
+                    </button>
+                </form>
+                <button id="settings-button"
+                    class="flex-shrink-0 bg-white/75 backdrop-blur-sm rounded-full p-2.5 shadow-md hover:bg-gray-200 transition-colors mb-1.5">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                        class="lucide lucide-settings-2">
+                        <path d="M20 7h-9" />
+                        <path d="M14 17H5" />
+                        <circle cx="17" cy="17" r="3" />
+                        <circle cx="7" cy="7" r="3" />
+                    </svg>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- 配置区域 ---
+        const DIFY_API_URL = '---';// <-- 在这里填入你的API URL
+        const DIFY_API_KEY = '---'; // <-- 在这里填入你的API密钥
+        // -----------------
+
+        const app = document.getElementById('app');
+        const chatContainer = document.getElementById('chat-container');
+        const chatForm = document.getElementById('chat-form');
+        const messageInput = document.getElementById('message-input');
+        const sendButton = document.getElementById('send-button');
+        const sendIcon = document.getElementById('send-icon');
+        const loadingSpinner = document.getElementById('loading-spinner');
+        const welcomeScreen = document.getElementById('welcome-screen');
+        const settingsButton = document.getElementById('settings-button');
+        const settingsPanel = document.getElementById('settings-panel');
+        const temperatureSlider = document.getElementById('temperature-slider');
+        const temperatureValue = document.getElementById('temperature-value');
+        const inputAreaWrapper = document.getElementById('input-area-wrapper');
+
+
+        let conversationId = null;
+        let isLoading = false;
+        let temperature = 0.7;
+        let chatHasStarted = false;
+
+        // --- 核心功能函数 ---
+        function startChatSession() {
+            if (chatHasStarted) return;
+            chatHasStarted = true;
+
+            app.classList.remove('justify-center');
+            welcomeScreen.classList.add('opacity-0');
+            setTimeout(() => {
+                welcomeScreen.style.display = 'none';
+            }, 500);
+
+            chatContainer.classList.remove('h-0', 'flex-grow-0');
+            chatContainer.classList.add('flex-1');
+            setTimeout(() => {
+                chatContainer.classList.remove('opacity-0');
+            }, 100);
+
+            inputAreaWrapper.classList.add('pb-[5vh]');
+        }
+
+        // --- 事件监听 ---
+        function handleInputResize() {
+            this.style.height = 'auto';
+            this.style.height = (this.scrollHeight) + 'px';
+        }
+        messageInput.addEventListener('input', handleInputResize, false);
+
+        messageInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                chatForm.dispatchEvent(new Event('submit'));
+            }
+        });
+
+        settingsButton.addEventListener('click', () => {
+            settingsPanel.classList.toggle('hidden');
+        });
+
+        temperatureSlider.addEventListener('input', (e) => {
+            temperature = parseFloat(e.target.value);
+            temperatureValue.textContent = temperature.toFixed(1);
+        });
+
+        chatForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            if (!chatHasStarted) startChatSession();
+
+            const message = messageInput.value.trim();
+            if (!message || isLoading) return;
+
+            addMessage(message, 'user');
+            messageInput.value = '';
+            messageInput.style.height = '48px';
+
+            setLoading(true);
+
+            try {
+                await callDifyAPI(message);
+            } catch (error) {
+                console.error('API call failed:', error);
+                addMessage('抱歉，发生了一个错误，请检查控制台获取更多信息。', 'assistant', true);
+            } finally {
+                setLoading(false);
+            }
+        });
+
+        function setLoading(state) {
+            isLoading = state;
+            sendButton.disabled = state;
+            sendIcon.classList.toggle('hidden', state);
+            loadingSpinner.classList.toggle('hidden', !state);
+        }
+
+        function addMessage(text, sender, isError = false) {
+            const messageWrapper = document.createElement('div');
+            messageWrapper.className = `flex items-start gap-3 ${sender === 'user' ? 'justify-end' : 'justify-start'}`;
+
+            const messageBubble = document.createElement('div');
+            let baseBubbleClasses = `max-w-md md:max-w-lg rounded-2xl px-4 py-3 break-words`;
+
+            if (sender === 'user') {
+                messageBubble.className = `${baseBubbleClasses} bg-blue-500 text-white rounded-tr-none`;
+                messageBubble.textContent = text; // 使用textContent防止XSS
+            } else {
+                messageBubble.className = `${baseBubbleClasses} prose prose-sm max-w-none ${isError
+                    ? 'bg-red-500 text-white rounded-tl-none'
+                    : 'bg-white text-gray-800 rounded-tl-none shadow'
+                    }`;
+                if (isError) messageBubble.textContent = text;
+            }
+
+            const avatar = document.createElement('div');
+            avatar.className = `w-8 h-8 rounded-full ${sender === 'user' ? 'bg-blue-200' : 'bg-gray-200'} flex-shrink-0 flex items-center justify-center font-bold text-gray-600`;
+            avatar.textContent = sender === 'user' ? 'U' : 'A';
+
+            if (sender === 'user') {
+                messageWrapper.appendChild(messageBubble);
+                messageWrapper.appendChild(avatar);
+            } else {
+                messageWrapper.appendChild(avatar);
+                messageWrapper.appendChild(messageBubble);
+            }
+
+            chatContainer.appendChild(messageWrapper);
+            scrollToBottom();
+            return messageBubble;
+        }
+
+        function scrollToBottom() {
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+
+        async function callDifyAPI(query) {
+            if (DIFY_API_KEY === 'YOUR_DIFY_API_KEY') {
+                addMessage("请在JS代码中配置你的Dify API Key。", 'assistant', true);
+                return;
+            }
+
+            const assistantBubble = addMessage('', 'assistant');
+            let fullResponse = '';
+            let isError = false;
+
+            // --- 性能优化: 使用requestAnimationFrame平滑流式输出 ---
+            let textBuffer = '';
+            let isRendering = false;
+            const cursorSpan = document.createElement('span');
+            cursorSpan.className = 'streaming-cursor';
+
+            const renderText = () => {
+                if (textBuffer.length > 0) {
+                    fullResponse += textBuffer;
+                    textBuffer = '';
+                    assistantBubble.textContent = fullResponse;
+                    assistantBubble.appendChild(cursorSpan);
+                    scrollToBottom();
+                }
+                if (isRendering) {
+                    requestAnimationFrame(renderText);
+                }
+            };
+
+            try {
+                const response = await fetch(DIFY_API_URL, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${DIFY_API_KEY}`,
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        inputs: {},
+                        query: query,
+                        user: 'dify-modern-ui-user',
+                        response_mode: 'streaming',
+                        conversation_id: conversationId,
+                        temperature: temperature,
+                    }),
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.message || `HTTP error! status: ${response.status}`);
+                }
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder('utf-8');
+                let streamEnded = false;
+
+                isRendering = true;
+                requestAnimationFrame(renderText);
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    const chunk = decoder.decode(value, { stream: true });
+                    const lines = chunk.split('\n');
+
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            try {
+                                const jsonData = JSON.parse(line.substring(6));
+                                if (jsonData.event === 'message') {
+                                    textBuffer += jsonData.answer;
+                                } else if (jsonData.event === 'message_end') {
+                                    streamEnded = true;
+                                }
+                                if (jsonData.conversation_id) {
+                                    conversationId = jsonData.conversation_id;
+                                }
+                            } catch (e) { /* 忽略解析错误 */ }
+                        }
+                    }
+                    if (streamEnded) break;
+                }
+            } catch (error) {
+                isError = true;
+                fullResponse = `请求失败: ${error.message}`;
+                console.error("Dify API Error:", error);
+            } finally {
+                isRendering = false;
+
+                if (textBuffer.length > 0) {
+                    fullResponse += textBuffer;
+                    textBuffer = '';
+                }
+
+                if (isError) {
+                    assistantBubble.textContent = fullResponse;
+                    assistantBubble.classList.add('bg-red-500', 'text-white');
+                } else {
+                    assistantBubble.innerHTML = marked.parse(fullResponse);
+                }
+                scrollToBottom();
+            }
+        }
+
+
+        // --- Canvas 背景特效 ---
+        const canvas = document.getElementById('background-canvas');
+        const ctx = canvas.getContext('2d');
+        let particlesArray;
+
+        function setupCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+
+            const isMobile = window.innerWidth < 768;
+            const particleCount = isMobile ? 25 : 60;
+
+            particlesArray = [];
+            for (let i = 0; i < particleCount; i++) {
+                let size = Math.random() * 2 + 1;
+                let x = Math.random() * canvas.width;
+                let y = Math.random() * canvas.height;
+                let directionX = Math.random() * .4 - .2;
+                let directionY = Math.random() * .4 - .2;
+                let color = 'rgba(150, 150, 200, 0.8)';
+                particlesArray.push(new Particle(x, y, directionX, directionY, size, color));
+            }
+        }
+
+        class Particle {
+            constructor(x, y, dirX, dirY, size, color) {
+                this.x = x; this.y = y; this.directionX = dirX; this.directionY = dirY; this.size = size; this.color = color;
+            }
+            draw() {
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2, false);
+                ctx.fillStyle = this.color;
+                ctx.fill();
+            }
+            update() {
+                if (this.x > canvas.width || this.x < 0) this.directionX = -this.directionX;
+                if (this.y > canvas.height || this.y < 0) this.directionY = -this.directionY;
+                this.x += this.directionX;
+                this.y += this.directionY;
+                this.draw();
+            }
+        }
+
+        function connect() {
+            let opacityValue = 1;
+            const connectDistance = (canvas.width / 10) * (canvas.height / 10);
+            for (let a = 0; a < particlesArray.length; a++) {
+                for (let b = a; b < particlesArray.length; b++) {
+                    let distance = ((particlesArray[a].x - particlesArray[b].x) ** 2) + ((particlesArray[a].y - particlesArray[b].y) ** 2);
+                    if (distance < connectDistance) {
+                        opacityValue = 1 - (distance / (connectDistance * 0.9));
+                        ctx.strokeStyle = `rgba(100, 120, 180, ${opacityValue})`;
+                        ctx.lineWidth = 1;
+                        ctx.beginPath();
+                        ctx.moveTo(particlesArray[a].x, particlesArray[a].y);
+                        ctx.lineTo(particlesArray[b].x, particlesArray[b].y);
+                        ctx.stroke();
+                    }
+                }
+            }
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            particlesArray.forEach(p => p.update());
+            connect();
+        }
+
+        window.addEventListener('resize', setupCanvas);
+
+        document.addEventListener('DOMContentLoaded', () => {
+            setupCanvas();
+            animate();
+            lucide.createIcons();
+        });
+
+    </script>
+</body>
+
+</html>
